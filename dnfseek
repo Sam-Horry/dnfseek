@@ -15,7 +15,7 @@ trap cleanup EXIT
 
 echo "⏳ Fetching package lists (this may take a few seconds)..."
 dnf list --installed 2>/dev/null | awk 'NR>2 {print $1}' > "$installed_cache"
-dnf list --available 2>/dev/null | awk 'NR>2 {print $1}' > "$available_cache"
+dnf -y --refresh --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NR>2 {print $1}' > "$available_cache"
 
 # ---------- MAIN LOOP ----------
 while true; do
@@ -63,7 +63,7 @@ while true; do
   clean_pkg=$(echo "$selected_pkg" | sed 's/ ✅//' | sed 's/\x1b\[[0-9;]*m//g')
 
   # ===== DETECT PACKAGE STATUS =====
-  if dnf list installed "$clean_pkg" &>/dev/null; then
+  if dnf list installed "$clean_pkg" 2>/dev/null | grep -q "^$clean_pkg\."; then
     status="installed"
   else
     status="available"
