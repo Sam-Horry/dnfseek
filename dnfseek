@@ -1,7 +1,13 @@
 #!/bin/bash
 # ---------- SAFETY CHECKS ----------
-command -v fzf >/dev/null 2>&1 || { echo "❌ fzf not installed. Please run: sudo dnf install -y fzf"; exit 1; }
-command -v dnf >/dev/null 2>&1 || { echo "❌ dnf not found. This script is for Fedora-based systems."; exit 1; }
+command -v fzf >/dev/null 2>&1 || {
+  echo "❌ fzf not installed. Please run: sudo dnf install -y fzf"
+  exit 1
+}
+command -v dnf >/dev/null 2>&1 || {
+  echo "❌ dnf not found. This script is for Fedora-based systems."
+  exit 1
+}
 
 # ---------- TEMP FILES FOR CACHING ----------
 installed_cache=$(mktemp)
@@ -14,22 +20,22 @@ cleanup() {
 trap cleanup EXIT
 
 echo "⏳ Fetching package lists (this may take a few seconds)..."
-dnf list --installed 2>/dev/null | awk 'NR>2 {print $1}' > "$installed_cache"
-dnf -y --refresh --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NR>2 {print $1}' > "$available_cache"
+dnf list --installed 2>/dev/null | awk 'NR>2 {print $1}' >"$installed_cache"
+dnf -y --refresh --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NR>2 {print $1}' >"$available_cache"
 
 # ---------- MAIN LOOP ----------
 while true; do
   # ===== MAIN MENU =====
-  mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n❌ Quit" | \
+  mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n❌ Quit" |
     fzf --prompt="Main Menu: " \
-        --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit' \
-        --height=20% \
-        --reverse)
+      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit' \
+      --height=99% \
+      --reverse)
 
   case "$mode" in
-    "❌ Quit" | "") exit 0 ;;
-    "📗 Show installed packages") filter_installed=true ;;
-    "🔎 Search all packages") filter_installed=false ;;
+  "❌ Quit" | "") exit 0 ;;
+  "📗 Show installed packages") filter_installed=true ;;
+  "🔎 Search all packages") filter_installed=false ;;
   esac
 
   # ===== PACKAGE LIST =====
@@ -48,22 +54,22 @@ while true; do
   fi
 
   # ===== PACKAGE SELECTION =====
-  selected_pkg=$(echo "$package_list" | \
+  selected_pkg=$(echo "$package_list" |
     fzf --ansi \
-        --prompt="🔎 Search package: " \
-        --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Back\n\033[32mGreen = Installed ✅\033[0m | White = Available' \
-        --height=40% \
-        --reverse \
-        --preview 'pkg=$(echo {} | sed "s/ ✅//" | sed "s/\x1b\[[0-9;]*m//g"); dnf info "$pkg" 2>/dev/null | grep -E "^(Name|Summary|Version|Release|Size|URL)"' \
-        --preview-window=down:wrap:60%)
+      --prompt="🔎 Search package: " \
+      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Back\n\033[32mGreen = Installed ✅\033[0m | White = Available' \
+      --height=99% \
+      --reverse \
+      --preview 'pkg=$(echo {} | sed "s/ ✅//" | sed "s/\x1b\[[0-9;]*m//g"); dnf info "$pkg" 2>/dev/null | grep -E "^(Name|Summary|Version|Release|Size|URL)"' \
+      --preview-window=down:wrap:25%)
 
   [ -z "$selected_pkg" ] && continue
 
-  # Clean ANSI colors and extra symbols
-  clean_pkg=$(echo "$selected_pkg" | sed 's/ ✅//' | sed 's/\x1b\[[0-9;]*m//g')
+  # Clean up the package name (remove the checkmark and colors)
+  clean_pkg=$(echo "$selected_pkg" | sed "s/ ✅//" | sed "s/\x1b\[[0-9;]*m//g")
 
-  # ===== DETECT PACKAGE STATUS =====
-  if dnf list installed "$clean_pkg" 2>/dev/null | grep -q "^$clean_pkg\."; then
+  # Check if the cleaned package name is in the installed cache
+  if grep -qxF "$clean_pkg" "$installed_cache"; then
     status="installed"
   else
     status="available"
@@ -71,30 +77,31 @@ while true; do
 
   # ===== ACTION MENU =====
   if [ "$status" = "installed" ]; then
-    action=$(printf "📦 Reinstall\n🗑️ Remove\n⬆️ Update\n🧩 Dependencies\n↩️ Back" | \
+    action=$(printf "📦 Reinstall\n🗑️ Remove\n⬆️ Update\n🧩 Dependencies\n↩️ Back" |
       fzf --prompt="Choose action: " \
-          --header="Selected (installed): $clean_pkg" \
-          --height=20% \
-          --reverse)
+        --header="Selected (installed): $clean_pkg" \
+        --height=99% \
+        --reverse)
   else
-    action=$(printf "📦 Install\n🧩 Dependencies\n↩️ Back" | \
+    action=$(printf "📦 Install\n🧩 Dependencies\n↩️ Back" |
       fzf --prompt="Choose action: " \
-          --header="Selected (available): $clean_pkg" \
-          --height=20% \
-          --reverse)
+        --header="Selected (available): $clean_pkg" \
+        --height=99% \
+        --reverse)
   fi
 
   case "$action" in
-    "📦 Install")   sudo dnf install -y "$clean_pkg" ;;
-    "📦 Reinstall") sudo dnf reinstall -y "$clean_pkg" ;;
-    "🗑️ Remove")    sudo dnf remove -y "$clean_pkg" ;;
-    "⬆️ Update")    sudo dnf upgrade -y "$clean_pkg" ;;
-    "🧩 Dependencies") 
-      clear
-      echo "🔍 Dependencies for $clean_pkg:"
-      dnf repoquery --requires "$clean_pkg" 2>/dev/null | sed 's/^/   • /'
-      echo -e "\nPress Enter to go back..."
-      read ;;
-    "↩️ Back" | "") continue ;;
+  "📦 Install") sudo dnf install -y "$clean_pkg" ;;
+  "📦 Reinstall") sudo dnf reinstall -y "$clean_pkg" ;;
+  "🗑️ Remove") sudo dnf remove -y "$clean_pkg" ;;
+  "⬆️ Update") sudo dnf upgrade -y "$clean_pkg" ;;
+  "🧩 Dependencies")
+    clear
+    echo "🔍 Dependencies for $clean_pkg:"
+    dnf repoquery --requires "$clean_pkg" 2>/dev/null | sed 's/^/   • /'
+    echo -e "\nPress Enter to go back..."
+    read
+    ;;
+  "↩️ Back" | "") continue ;;
   esac
 done
