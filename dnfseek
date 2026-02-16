@@ -9,24 +9,42 @@ command -v dnf >/dev/null 2>&1 || {
   exit 1
 }
 
-# ---------- TEMP FILES FOR CACHING ----------
-installed_cache=$(mktemp)
-available_cache=$(mktemp)
+# ---------- CACHE SETUP ----------
+CACHE_DIR="$HOME/.cache/dnfseek"
+mkdir -p "$CACHE_DIR"
+
+installed_cache="$CACHE_DIR/installed"
+available_cache="$CACHE_DIR/available"
+
+update_cache() {
+  echo "⏳ Updating package lists..."
+  # Use temp files then move to avoid partial reads
+  local tmp_inst=$(mktemp)
+  local tmp_avail=$(mktemp)
+  
+  dnf list --installed 2>/dev/null | awk 'NR>2 {print $1}' >"$tmp_inst"
+  dnf -y --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NR>2 {print $1}' >"$tmp_avail"
+  
+  mv "$tmp_inst" "$installed_cache"
+  mv "$tmp_avail" "$available_cache"
+  echo "✅ Cache updated."
+}
 
 cleanup() {
-  rm -f "$installed_cache" "$available_cache"
-  echo -e "\n🧹 Cache cleared. Exiting..."
+  echo -e "\n👋 Exiting..."
 }
 trap cleanup EXIT
 
-echo "⏳ Fetching package lists (this may take a few seconds)..."
-dnf list --installed 2>/dev/null | awk 'NR>2 {print $1}' >"$installed_cache"
-dnf -y --refresh --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NR>2 {print $1}' >"$available_cache"
+# Initial cache check: fetch if missing or older than 24h
+if [[ ! -f "$installed_cache" || ! -f "$available_cache" ]] || \
+   [[ $(find "$installed_cache" -mmin +1440 2>/dev/null) ]]; then
+  update_cache
+fi
 
 # ---------- MAIN LOOP ----------
 while true; do
   # ===== MAIN MENU =====
-  mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n🆙 Upgrade all packages\n❌ Quit" |
+  mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n🆙 Upgrade all packages\n🔄 Refresh cache\n❌ Quit" |
     fzf --prompt="Main Menu: " \
       --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit' \
       --height=99% \
@@ -38,8 +56,13 @@ while true; do
   "🔎 Search all packages") filter_installed=false ;;
   "🆙 Upgrade all packages")
     sudo dnf upgrade
+    update_cache
     echo -e "\nPress Enter to return to menu..."
     read
+    continue
+    ;;
+  "🔄 Refresh cache")
+    update_cache
     continue
     ;;
   esac
@@ -97,10 +120,18 @@ while true; do
   fi
 
   case "$action" in
-  "📦 Install") sudo dnf install -y "$clean_pkg" ;;
-  "📦 Reinstall") sudo dnf reinstall -y "$clean_pkg" ;;
-  "🗑️ Remove") sudo dnf remove -y "$clean_pkg" ;;
-  "⬆️ Update") sudo dnf upgrade -y "$clean_pkg" ;;
+  "📦 Install") 
+    sudo dnf install -y "$clean_pkg" && update_cache 
+    ;;
+  "📦 Reinstall") 
+    sudo dnf reinstall -y "$clean_pkg" && update_cache
+    ;;
+  "🗑️ Remove") 
+    sudo dnf remove -y "$clean_pkg" && update_cache
+    ;;
+  "⬆️ Update") 
+    sudo dnf upgrade -y "$clean_pkg" && update_cache
+    ;;
   "🧩 Dependencies")
     clear
     echo "🔍 Dependencies for $clean_pkg:"
