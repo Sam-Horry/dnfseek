@@ -26,7 +26,7 @@ dnf -y --refresh --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2
 # ---------- MAIN LOOP ----------
 while true; do
   # ===== MAIN MENU =====
-  mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n❌ Quit" |
+  mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n🆙 Upgrade all packages\n❌ Quit" |
     fzf --prompt="Main Menu: " \
       --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit' \
       --height=99% \
@@ -36,6 +36,12 @@ while true; do
   "❌ Quit" | "") exit 0 ;;
   "📗 Show installed packages") filter_installed=true ;;
   "🔎 Search all packages") filter_installed=false ;;
+  "🆙 Upgrade all packages")
+    sudo dnf upgrade
+    echo -e "\nPress Enter to return to menu..."
+    read
+    continue
+    ;;
   esac
 
   # ===== PACKAGE LIST =====
