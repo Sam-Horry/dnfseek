@@ -21,10 +21,10 @@ update_cache() {
   # Use temp files then move to avoid partial reads
   local tmp_inst=$(mktemp)
   local tmp_avail=$(mktemp)
-  
-  dnf list --installed 2>/dev/null | awk 'NR>2 {print $1}' >"$tmp_inst"
-  dnf -y --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NR>2 {print $1}' >"$tmp_avail"
-  
+
+  dnf -q list --installed 2>/dev/null | awk 'NF>=3 && $2 ~ /[0-9.-]/ {print $1}' >"$tmp_inst"
+  dnf -q -y --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NF>=3 && $2 ~ /[0-9.-]/ {print $1}' >"$tmp_avail"
+
   mv "$tmp_inst" "$installed_cache"
   mv "$tmp_avail" "$available_cache"
   echo "✅ Cache updated."
@@ -36,8 +36,8 @@ cleanup() {
 trap cleanup EXIT
 
 # Initial cache check: fetch if missing or older than 24h
-if [[ ! -f "$installed_cache" || ! -f "$available_cache" ]] || \
-   [[ $(find "$installed_cache" -mmin +1440 2>/dev/null) ]]; then
+if [[ ! -f "$installed_cache" || ! -f "$available_cache" ]] ||
+  [[ $(find "$installed_cache" -mmin +1440 2>/dev/null) ]]; then
   update_cache
 fi
 
@@ -57,8 +57,6 @@ while true; do
   "🆙 Upgrade all packages")
     sudo dnf upgrade
     update_cache
-    echo -e "\nPress Enter to return to menu..."
-    read
     continue
     ;;
   "🔄 Refresh cache")
@@ -120,16 +118,16 @@ while true; do
   fi
 
   case "$action" in
-  "📦 Install") 
-    sudo dnf install -y "$clean_pkg" && update_cache 
+  "📦 Install")
+    sudo dnf install -y "$clean_pkg" && update_cache
     ;;
-  "📦 Reinstall") 
+  "📦 Reinstall")
     sudo dnf reinstall -y "$clean_pkg" && update_cache
     ;;
-  "🗑️ Remove") 
+  "🗑️ Remove")
     sudo dnf remove -y "$clean_pkg" && update_cache
     ;;
-  "⬆️ Update") 
+  "⬆️ Update")
     sudo dnf upgrade -y "$clean_pkg" && update_cache
     ;;
   "🧩 Dependencies")
