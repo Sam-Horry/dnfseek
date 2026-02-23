@@ -9,6 +9,11 @@ command -v dnf >/dev/null 2>&1 || {
   exit 1
 }
 
+# Isolate fzf from user's custom environment variables
+unset FZF_DEFAULT_OPTS FZF_DEFAULT_COMMAND
+# Standard options for all fzf menus
+fzf_base_opts=(--height=99% --reverse --style=default)
+
 # ---------- CACHE SETUP ----------
 CACHE_DIR="$HOME/.cache/dnfseek"
 mkdir -p "$CACHE_DIR"
@@ -45,10 +50,9 @@ fi
 while true; do
   # ===== MAIN MENU =====
   mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n🆙 Upgrade all packages\n🔄 Refresh cache\n❌ Quit" |
-    fzf --prompt="Main Menu: " \
-      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit' \
-      --height=99% \
-      --reverse)
+    fzf "${fzf_base_opts[@]}" \
+      --prompt="Main Menu: " \
+      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit')
 
   case "$mode" in
   "❌ Quit" | "") exit 0 ;;
@@ -82,11 +86,9 @@ while true; do
 
   # ===== PACKAGE SELECTION =====
   selected_pkg=$(echo "$package_list" |
-    fzf --ansi \
+    fzf "${fzf_base_opts[@]}" --ansi \
       --prompt="🔎 Search package: " \
       --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Back\n\033[32mGreen = Installed ✅\033[0m | White = Available' \
-      --height=99% \
-      --reverse \
       --preview 'pkg=$(echo {} | sed "s/ ✅//" | sed "s/\x1b\[[0-9;]*m//g"); dnf info "$pkg" 2>/dev/null | grep -E "^(Name|Summary|Version|Release|Size|URL)"' \
       --preview-window=down:wrap:25%)
 
@@ -105,16 +107,14 @@ while true; do
   # ===== ACTION MENU =====
   if [ "$status" = "installed" ]; then
     action=$(printf "📦 Reinstall\n🗑️ Remove\n⬆️ Update\n🧩 Dependencies\n↩️ Back" |
-      fzf --prompt="Choose action: " \
-        --header="Selected (installed): $clean_pkg" \
-        --height=99% \
-        --reverse)
+      fzf "${fzf_base_opts[@]}" \
+        --prompt="Choose action: " \
+        --header="Selected (installed): $clean_pkg")
   else
     action=$(printf "📦 Install\n🧩 Dependencies\n↩️ Back" |
-      fzf --prompt="Choose action: " \
-        --header="Selected (available): $clean_pkg" \
-        --height=99% \
-        --reverse)
+      fzf "${fzf_base_opts[@]}" \
+        --prompt="Choose action: " \
+        --header="Selected (available): $clean_pkg")
   fi
 
   case "$action" in
