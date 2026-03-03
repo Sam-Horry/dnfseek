@@ -77,10 +77,8 @@ while true; do
   else
     # merge installed + available (color installed green)
     package_list=$(
-      {
-        awk '{print "\033[32m" $1 " ✅\033[0m"}' "$installed_cache"
-        grep -vxFf "$installed_cache" "$available_cache"
-      } | sort -u
+      cat "$installed_cache" "$available_cache" | sort -u | \
+        awk 'NR==FNR {inst[$0]; next} { if ($0 in inst) printf "\033[32m%s ✅\033[0m\n", $0; else print $0 }' "$installed_cache" -
     )
   fi
 
