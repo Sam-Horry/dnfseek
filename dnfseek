@@ -36,6 +36,7 @@ update_cache() {
 }
 
 cleanup() {
+  rm -rf "$CACHE_DIR/previews" 2>/dev/null
   echo -e "\n👋 Exiting..."
 }
 trap cleanup EXIT
@@ -77,7 +78,7 @@ while true; do
   else
     # merge installed + available (color installed green)
     package_list=$(
-      cat "$installed_cache" "$available_cache" | sort -u | \
+      cat "$installed_cache" "$available_cache" | sort -u |
         awk 'NR==FNR {inst[$0]; next} { if ($0 in inst) printf "\033[32m%s ✅\033[0m\n", $0; else print $0 }' "$installed_cache" -
     )
   fi
@@ -86,9 +87,7 @@ while true; do
   selected_pkg=$(echo "$package_list" |
     fzf "${fzf_base_opts[@]}" --ansi \
       --prompt="🔎 Search package: " \
-      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Back\n\033[32mGreen = Installed ✅\033[0m | White = Available' \
-      --preview 'pkg=$(echo {} | sed "s/ ✅//" | sed "s/\x1b\[[0-9;]*m//g"); dnf info "$pkg" 2>/dev/null | grep -E "^(Name|Summary|Version|Release|Size|URL)"' \
-      --preview-window=down:wrap:25%)
+      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Back\n\033[32mGreen = Installed ✅\033[0m | White = Available')
 
   [ -z "$selected_pkg" ] && continue
 
@@ -102,18 +101,33 @@ while true; do
     status="available"
   fi
 
+  # Fetch info once to a temp file in the cache directory to avoid repeated dnf calls
+  preview_cache_dir="$CACHE_DIR/previews"
+  mkdir -p "$preview_cache_dir"
+  info_tmp=$(mktemp "$preview_cache_dir/preview_$clean_pkg.XXXXXX")
+
+  # Small visual feedback since dnf can be slow
+  echo "🔍 Fetching information for $clean_pkg..."
+  dnf info "$clean_pkg" 2>/dev/null | grep -E '^(Name|Summary|Version|Release|Size|URL|Description)' >"$info_tmp"
+
   # ===== ACTION MENU =====
   if [ "$status" = "installed" ]; then
     action=$(printf "📦 Reinstall\n🗑️ Remove\n⬆️ Update\n🧩 Dependencies\n↩️ Back" |
       fzf "${fzf_base_opts[@]}" \
         --prompt="Choose action: " \
-        --header="Selected (installed): $clean_pkg")
+        --header="Selected (installed): $clean_pkg" \
+        --preview "cat '$info_tmp'" \
+        --preview-window=down:wrap:25%)
   else
     action=$(printf "📦 Install\n🧩 Dependencies\n↩️ Back" |
       fzf "${fzf_base_opts[@]}" \
         --prompt="Choose action: " \
-        --header="Selected (available): $clean_pkg")
+        --header="Selected (available): $clean_pkg" \
+        --preview "cat '$info_tmp'" \
+        --preview-window=down:wrap:25%)
   fi
+
+  rm -f "$info_tmp"
 
   case "$action" in
   "📦 Install")
