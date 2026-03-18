@@ -26,6 +26,12 @@ It uses [fzf](https://github.com/junegunn/fzf) to provide a searchable, interact
 - `fzf`
 - `dnf`
 
+These packages are also required, but are most likely already installed on your system:
+
+- `grep`
+- `sed`
+- `gawk`
+
 Install `fzf`:
 
 ```bash
