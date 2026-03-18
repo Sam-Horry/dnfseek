@@ -1,154 +1,206 @@
 #!/bin/bash
-# ---------- SAFETY CHECKS ----------
-command -v fzf >/dev/null 2>&1 || {
-  echo "❌ fzf not installed. Please run: sudo dnf install -y fzf"
-  exit 1
-}
-command -v dnf >/dev/null 2>&1 || {
-  echo "❌ dnf not found. This script is for Fedora-based systems."
-  exit 1
-}
+# dnfseek: A TUI package browser for Fedora
+# Inspired by pacseek
+
+# ---------- CONFIGURATION & CONSTANTS ----------
+CACHE_DIR="$HOME/.cache/dnfseek"
+INSTALLED_CACHE="$CACHE_DIR/installed"
+AVAILABLE_CACHE="$CACHE_DIR/available"
+PREVIEW_CACHE_DIR="$CACHE_DIR/previews"
 
 # Isolate fzf from user's custom environment variables
 unset FZF_DEFAULT_OPTS FZF_DEFAULT_COMMAND
+
 # Standard options for all fzf menus
-fzf_base_opts=(--height=99% --reverse --style=default)
+FZF_BASE_OPTS=(--height=99% --reverse --style=default)
 
-# ---------- CACHE SETUP ----------
-CACHE_DIR="$HOME/.cache/dnfseek"
-mkdir -p "$CACHE_DIR"
+# ---------- DEPENDENCY CHECKS ----------
+check_dependencies() {
+  command -v fzf >/dev/null 2>&1 || {
+    echo "❌ fzf not installed. Please run: sudo dnf install -y fzf"
+    exit 1
+  }
+  command -v dnf >/dev/null 2>&1 || {
+    echo "❌ dnf not found. This script is for Fedora-based systems."
+    exit 1
+  }
+}
 
-installed_cache="$CACHE_DIR/installed"
-available_cache="$CACHE_DIR/available"
-
+# ---------- CACHE MANAGEMENT ----------
 update_cache() {
   echo "⏳ Updating package lists..."
-  # Use temp files then move to avoid partial reads
-  local tmp_inst=$(mktemp)
-  local tmp_avail=$(mktemp)
+  mkdir -p "$CACHE_DIR"
+  
+  # Use temp files then move to avoid partial reads during the dnf list process
+  local tmp_inst
+  local tmp_avail
+  tmp_inst=$(mktemp)
+  tmp_avail=$(mktemp)
 
+  # dnf list output format: name.arch version repo
+  # We extract only the name ($1) and filter for valid version strings in $2
   dnf -q list --installed 2>/dev/null | awk 'NF>=3 && $2 ~ /[0-9.-]/ {print $1}' >"$tmp_inst"
   dnf -q -y --setopt=gpgcheck=1 --setopt=repo_gpgcheck=1 list --available 2>/dev/null | awk 'NF>=3 && $2 ~ /[0-9.-]/ {print $1}' >"$tmp_avail"
 
-  mv "$tmp_inst" "$installed_cache"
-  mv "$tmp_avail" "$available_cache"
+  mv "$tmp_inst" "$INSTALLED_CACHE"
+  mv "$tmp_avail" "$AVAILABLE_CACHE"
   echo "✅ Cache updated."
 }
 
+setup_cache() {
+  mkdir -p "$CACHE_DIR"
+  # Initial cache check: fetch if missing or older than 24h (1440 minutes)
+  if [[ ! -f "$INSTALLED_CACHE" || ! -f "$AVAILABLE_CACHE" ]] ||
+     [[ $(find "$INSTALLED_CACHE" -mmin +1440 2>/dev/null) ]]; then
+    update_cache
+  fi
+}
+
 cleanup() {
-  rm -rf "$CACHE_DIR/previews" 2>/dev/null
+  rm -rf "$PREVIEW_CACHE_DIR" 2>/dev/null
   echo -e "\n👋 Exiting..."
 }
-trap cleanup EXIT
 
-# Initial cache check: fetch if missing or older than 24h
-if [[ ! -f "$installed_cache" || ! -f "$available_cache" ]] ||
-  [[ $(find "$installed_cache" -mmin +1440 2>/dev/null) ]]; then
-  update_cache
-fi
-
-# ---------- MAIN LOOP ----------
-while true; do
-  # ===== MAIN MENU =====
-  mode=$(printf "🔎 Search all packages\n📗 Show installed packages\n🆙 Upgrade all packages\n🔄 Refresh cache\n❌ Quit" |
-    fzf "${fzf_base_opts[@]}" \
-      --prompt="Main Menu: " \
-      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit')
-
-  case "$mode" in
-  "❌ Quit" | "") exit 0 ;;
-  "📗 Show installed packages") filter_installed=true ;;
-  "🔎 Search all packages") filter_installed=false ;;
-  "🆙 Upgrade all packages")
-    sudo dnf upgrade
-    update_cache
-    continue
-    ;;
-  "🔄 Refresh cache")
-    update_cache
-    continue
-    ;;
-  esac
-
-  # ===== PACKAGE LIST =====
+# ---------- DATA RETRIEVAL ----------
+get_package_list() {
+  local filter_installed=$1
+  
   if [ "$filter_installed" = true ]; then
-    package_list=$(
-      awk '{print "\033[32m" $1 " ✅\033[0m"}' "$installed_cache"
-    )
+    # Return only installed packages, colorized green with a checkmark
+    awk '{print "\033[32m" $1 " ✅\033[0m"}' "$INSTALLED_CACHE"
   else
-    # merge installed + available (color installed green)
-    package_list=$(
-      cat "$installed_cache" "$available_cache" | sort -u |
-        awk 'NR==FNR {inst[$0]; next} { if ($0 in inst) printf "\033[32m%s ✅\033[0m\n", $0; else print $0 }' "$installed_cache" -
-    )
+    # Merge installed + available. 
+    # Logic: Read installed list into memory (inst array), then process the merged list.
+    # If a package exists in the 'inst' array, color it green.
+    cat "$INSTALLED_CACHE" "$AVAILABLE_CACHE" | sort -u |
+      awk 'NR==FNR {inst[$0]; next} { if ($0 in inst) printf "\033[32m%s ✅\033[0m\n", $0; else print $0 }' "$INSTALLED_CACHE" -
   fi
+}
 
-  # ===== PACKAGE SELECTION =====
-  selected_pkg=$(echo "$package_list" |
-    fzf "${fzf_base_opts[@]}" --ansi \
-      --prompt="🔎 Search package: " \
-      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Back\n\033[32mGreen = Installed ✅\033[0m | White = Available')
-
-  [ -z "$selected_pkg" ] && continue
-
-  # Clean up the package name (remove the checkmark and colors)
-  clean_pkg=$(echo "$selected_pkg" | sed "s/ ✅//" | sed "s/\x1b\[[0-9;]*m//g")
-
-  # Check if the cleaned package name is in the installed cache
-  if grep -qxF "$clean_pkg" "$installed_cache"; then
-    status="installed"
-  else
-    status="available"
-  fi
-
-  # Fetch info once to a temp file in the cache directory to avoid repeated dnf calls
-  preview_cache_dir="$CACHE_DIR/previews"
-  mkdir -p "$preview_cache_dir"
-  info_tmp=$(mktemp "$preview_cache_dir/preview_$clean_pkg.XXXXXX")
+get_package_info() {
+  local pkg=$1
+  local info_file
+  
+  mkdir -p "$PREVIEW_CACHE_DIR"
+  info_file=$(mktemp "$PREVIEW_CACHE_DIR/preview_$pkg.XXXXXX")
 
   # Small visual feedback since dnf can be slow
-  echo "🔍 Fetching information for $clean_pkg..."
-  dnf info "$clean_pkg" 2>/dev/null | grep -E '^(Name|Summary|Version|Release|Size|URL|Description)' >"$info_tmp"
+  echo "🔍 Fetching information for $pkg..." >&2
+  dnf info "$pkg" 2>/dev/null | grep -E '^(Name|Summary|Version|Release|Size|URL|Description)' > "$info_file"
+  
+  echo "$info_file"
+}
 
-  # ===== ACTION MENU =====
+# ---------- UI / MENU FUNCTIONS ----------
+show_main_menu() {
+  printf "🔎 Search all packages\n📗 Show installed packages\n🆙 Upgrade all packages\n🔄 Refresh cache\n❌ Quit" |
+    fzf "${FZF_BASE_OPTS[@]}" \
+      --prompt="Main Menu: " \
+      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Quit'
+}
+
+show_package_selection() {
+  local list_content="$1"
+  echo "$list_content" |
+    fzf "${FZF_BASE_OPTS[@]}" --ansi \
+      --prompt="🔎 Search package: " \
+      --header=$'⬆⬇ Navigate | ⏎ Select | Ctrl-C Back\n\033[32mGreen = Installed ✅\033[0m | White = Available'
+}
+
+show_action_menu() {
+  local pkg=$1
+  local status=$2
+  local info_file=$3
+  local actions
+  local header_text
+  
   if [ "$status" = "installed" ]; then
-    action=$(printf "📦 Reinstall\n🗑️ Remove\n⬆️ Update\n🧩 Dependencies\n↩️ Back" |
-      fzf "${fzf_base_opts[@]}" \
-        --prompt="Choose action: " \
-        --header="Selected (installed): $clean_pkg" \
-        --preview "cat '$info_tmp'" \
-        --preview-window=down:wrap:25%)
+    actions="📦 Reinstall\n🗑️ Remove\n⬆️ Update\n🧩 Dependencies\n↩️ Back"
+    header_text="Selected (installed): $pkg"
   else
-    action=$(printf "📦 Install\n🧩 Dependencies\n↩️ Back" |
-      fzf "${fzf_base_opts[@]}" \
-        --prompt="Choose action: " \
-        --header="Selected (available): $clean_pkg" \
-        --preview "cat '$info_tmp'" \
-        --preview-window=down:wrap:25%)
+    actions="📦 Install\n🧩 Dependencies\n↩️ Back"
+    header_text="Selected (available): $pkg"
   fi
 
-  rm -f "$info_tmp"
+  printf "%b" "$actions" |
+    fzf "${FZF_BASE_OPTS[@]}" \
+      --prompt="Choose action: " \
+      --header="$header_text" \
+      --preview "cat '$info_file'" \
+      --preview-window=down:wrap:25%
+}
+
+# ---------- ACTION EXECUTION ----------
+execute_package_action() {
+  local action=$1
+  local pkg=$2
 
   case "$action" in
-  "📦 Install")
-    sudo dnf install -y "$clean_pkg" && update_cache
-    ;;
-  "📦 Reinstall")
-    sudo dnf reinstall -y "$clean_pkg" && update_cache
-    ;;
-  "🗑️ Remove")
-    sudo dnf remove -y "$clean_pkg" && update_cache
-    ;;
-  "⬆️ Update")
-    sudo dnf upgrade -y "$clean_pkg" && update_cache
-    ;;
-  "🧩 Dependencies")
-    clear
-    echo "🔍 Dependencies for $clean_pkg:"
-    dnf repoquery --requires "$clean_pkg" 2>/dev/null | sed 's/^/   • /'
-    echo -e "\nPress Enter to go back..."
-    read
-    ;;
-  "↩️ Back" | "") continue ;;
+    "📦 Install")
+      sudo dnf install -y "$pkg" && update_cache ;;
+    "📦 Reinstall")
+      sudo dnf reinstall -y "$pkg" && update_cache ;;
+    "🗑️ Remove")
+      sudo dnf remove -y "$pkg" && update_cache ;;
+    "⬆️ Update")
+      sudo dnf upgrade -y "$pkg" && update_cache ;;
+    "🧩 Dependencies")
+      clear
+      echo "🔍 Dependencies for $pkg:"
+      dnf repoquery --requires "$pkg" 2>/dev/null | sed 's/^/   • /'
+      echo -e "\nPress Enter to go back..."
+      read -r ;;
   esac
-done
+}
+
+# ---------- MAIN CONTROL LOOP ----------
+main() {
+  check_dependencies
+  setup_cache
+  trap cleanup EXIT
+
+  while true; do
+    local mode
+    mode=$(show_main_menu)
+    
+    case "$mode" in
+      "❌ Quit" | "") exit 0 ;;
+      "🆙 Upgrade all packages")
+        sudo dnf upgrade && update_cache
+        continue ;;
+      "🔄 Refresh cache")
+        update_cache
+        continue ;;
+    esac
+
+    local filter_installed=false
+    [[ "$mode" == "📗 Show installed packages" ]] && filter_installed=true
+
+    local package_list
+    package_list=$(get_package_list "$filter_installed")
+
+    local selected_raw
+    selected_raw=$(show_package_selection "$package_list")
+    [[ -z "$selected_raw" ]] && continue
+
+    # Clean up the package name (remove the checkmark and ANSI colors)
+    local clean_pkg
+    clean_pkg=$(echo "$selected_raw" | sed "s/ ✅//" | sed "s/\x1b\[[0-9;]*m//g")
+
+    local status="available"
+    grep -qxF "$clean_pkg" "$INSTALLED_CACHE" && status="installed"
+
+    local info_file
+    info_file=$(get_package_info "$clean_pkg")
+
+    local action
+    action=$(show_action_menu "$clean_pkg" "$status" "$info_file")
+    
+    rm -f "$info_file"
+    
+    [[ -n "$action" && "$action" != "↩️ Back" ]] && execute_package_action "$action" "$clean_pkg"
+  done
+}
+
+# Start the application
+main "$@"
