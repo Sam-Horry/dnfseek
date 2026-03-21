@@ -51,6 +51,14 @@ chmod +x dnfseek
 ./dnfseek
 ```
 
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-u`, `--update` | Check for and install updates from GitHub |
+| `-v`, `--version` | Show current version |
+| `-h`, `--help` | Show help message |
+
 ### Global Installation
 
 To run `dnfseek` from anywhere:
