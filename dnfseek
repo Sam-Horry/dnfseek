@@ -3,6 +3,8 @@
 # Inspired by pacseek
 
 # ---------- CONFIGURATION & CONSTANTS ----------
+VERSION="1.1.0"
+REPO_URL="https://raw.githubusercontent.com/Sam-Horry/dnfseek/main/dnfseek"
 CACHE_DIR="$HOME/.cache/dnfseek"
 INSTALLED_CACHE="$CACHE_DIR/installed"
 AVAILABLE_CACHE="$CACHE_DIR/available"
@@ -24,9 +26,63 @@ check_dependencies() {
     echo "❌ dnf not found. This script is for Fedora-based systems."
     exit 1
   }
+  command -v curl >/dev/null 2>&1 || {
+    echo "❌ curl not installed. Please run: sudo dnf install -y curl"
+    exit 1
+  }
 }
 
 # ---------- CACHE MANAGEMENT ----------
+self_update() {
+  check_dependencies
+  echo "⏳ Checking for updates..."
+  
+  local remote_version
+  remote_version=$(curl -s "$REPO_URL" | grep -m1 "VERSION=" | cut -d'"' -f2)
+
+  if [[ -z "$remote_version" ]]; then
+    echo "❌ Failed to fetch remote version. Check your internet connection."
+    exit 1
+  fi
+
+  if [[ "$VERSION" == "$remote_version" ]]; then
+    echo "✅ dnfseek is already up to date (v$VERSION)."
+    exit 0
+  fi
+
+  echo "🆙 Updating dnfseek from v$VERSION to v$remote_version..."
+  local target_path
+  target_path=$(readlink -f "$0")
+  local tmp_file
+  tmp_file=$(mktemp)
+
+  if curl -s "$REPO_URL" -o "$tmp_file"; then
+    # Basic validation: ensure the file contains a shebang
+    if ! grep -q "^#!/bin/bash" "$tmp_file"; then
+      echo "❌ Downloaded file appears invalid."
+      rm -f "$tmp_file"
+      exit 1
+    fi
+
+    if [[ ! -w "$target_path" ]]; then
+      echo "🔒 Elevated permissions required to update $target_path"
+      sudo cp "$tmp_file" "$target_path"
+      sudo chmod +x "$target_path"
+    else
+      cp "$tmp_file" "$target_path"
+      chmod +x "$target_path"
+    fi
+    
+    echo "🎉 Update successful! Please restart dnfseek."
+    rm -f "$tmp_file"
+    exit 0
+  else
+    echo "❌ Update failed."
+    rm -f "$tmp_file"
+    exit 1
+  fi
+}
+
 update_cache() {
   echo "⏳ Updating package lists..."
   mkdir -p "$CACHE_DIR"
@@ -92,6 +148,24 @@ get_package_info() {
 }
 
 # ---------- UI / MENU FUNCTIONS ----------
+show_help() {
+  cat <<EOF
+dnfseek v$VERSION
+A TUI package browser for Fedora.
+
+Usage:
+  dnfseek [options]
+
+Options:
+  -u, --update   Check for and install updates
+  -v, --version  Show version information
+  -h, --help     Show this help message
+
+Navigation:
+  ⬆⬇ Navigate | ⏎ Select | Ctrl-C Back/Quit
+EOF
+}
+
 show_main_menu() {
   printf "🔎 Search all packages\n📗 Show installed packages\n🆙 Upgrade all packages\n🔄 Refresh cache\n❌ Quit" |
     fzf "${FZF_BASE_OPTS[@]}" \
@@ -155,6 +229,13 @@ execute_package_action() {
 
 # ---------- MAIN CONTROL LOOP ----------
 main() {
+  case "$1" in
+    --update|-u) self_update ;;
+    --version|-v) echo "dnfseek v$VERSION"; exit 0 ;;
+    --help|-h) show_help; exit 0 ;;
+    -*) echo "Unknown option: $1"; show_help; exit 1 ;;
+  esac
+
   check_dependencies
   setup_cache
   trap cleanup EXIT
